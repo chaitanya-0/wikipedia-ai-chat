@@ -1,0 +1,11 @@
+.env
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+StackyonVenv/
+.StackyonVenv/
+
+.vscode/

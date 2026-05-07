@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Wikipedia AI Chat</title>
+
+    <link rel="stylesheet" href="/static/style.css">
+
+    <!-- Markdown renderer -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- HTML sanitizer -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+</head>
+
+<body>
+    <div class="app-shell">
+        <header class="app-header">
+            <div>
+                <h1>Wikipedia AI Chat</h1>
+                <p>Ask a question. The app searches Wikipedia and answers using AI.</p>
+            </div>
+            <span class="status-pill">Online</span>
+        </header>
+
+        <main id="chat-box" class="chat-box">
+            <div class="empty-state">
+                <div class="empty-icon">✦</div>
+                <h2>Start a conversation</h2>
+                <p>Try asking: <span>“Explain World War 2 in simple terms”</span></p>
+            </div>
+        </main>
+
+        <footer class="composer">
+            <textarea
+                id="user-input"
+                rows="1"
+                placeholder="Ask something..."
+            ></textarea>
+
+            <button id="send-button" onclick="sendMessage()">
+                Send
+            </button>
+        </footer>
+    </div>
+
+    <script>
+        const input = document.getElementById("user-input");
+        const chatBox = document.getElementById("chat-box");
+        const sendButton = document.getElementById("send-button");
+
+        marked.setOptions({
+            breaks: true,
+            gfm: true
+        });
+
+        async function sendMessage() {
+            const message = input.value.trim();
+
+            if (!message) return;
+
+            removeEmptyState();
+
+            addUserMessage(message);
+
+            input.value = "";
+            resizeTextarea();
+
+            const loadingMessage = addLoadingMessage();
+
+            setLoading(true);
+
+            try {
+                const response = await fetch("/chat", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ message })
+                });
+
+                const data = await response.json();
+
+                loadingMessage.remove();
+
+                if (!response.ok || data.error) {
+                    addErrorMessage(data.error || "Something went wrong.");
+                    return;
+                }
+
+                addBotMessage(data.answer || "No answer returned.");
+            } catch (err) {
+                loadingMessage.remove();
+                addErrorMessage("Request failed. Check your Flask server and API key.");
+            } finally {
+                setLoading(false);
+                scrollToBottom();
+            }
+        }
+
+        function addUserMessage(text) {
+            const wrapper = document.createElement("div");
+            wrapper.className = "message-row user-row";
+
+            const bubble = document.createElement("div");
+            bubble.className = "message user-message";
+            bubble.textContent = text;
+
+            wrapper.appendChild(bubble);
+            chatBox.appendChild(wrapper);
+
+            scrollToBottom();
+        }
+
+        function addBotMessage(markdownText) {
+            const wrapper = document.createElement("div");
+            wrapper.className = "message-row bot-row";
+
+            const avatar = document.createElement("div");
+            avatar.className = "avatar";
+            avatar.textContent = "AI";
+
+            const bubble = document.createElement("div");
+            bubble.className = "message bot-message markdown-body";
+
+            const rawHtml = marked.parse(markdownText);
+            const cleanHtml = DOMPurify.sanitize(rawHtml);
+
+            bubble.innerHTML = cleanHtml;
+
+            wrapper.appendChild(avatar);
+            wrapper.appendChild(bubble);
+
+            chatBox.appendChild(wrapper);
+
+            scrollToBottom();
+        }
+
+        function addLoadingMessage() {
+            const wrapper = document.createElement("div");
+            wrapper.className = "message-row bot-row loading-row";
+
+            const avatar = document.createElement("div");
+            avatar.className = "avatar";
+            avatar.textContent = "AI";
+
+            const bubble = document.createElement("div");
+            bubble.className = "message bot-message loading-message";
+            bubble.innerHTML = `
+                <span class="typing-dot"></span>
+                <span class="typing-dot"></span>
+                <span class="typing-dot"></span>
+            `;
+
+            wrapper.appendChild(avatar);
+            wrapper.appendChild(bubble);
+
+            chatBox.appendChild(wrapper);
+
+            scrollToBottom();
+
+            return wrapper;
+        }
+
+        function addErrorMessage(errorText) {
+            const wrapper = document.createElement("div");
+            wrapper.className = "message-row bot-row";
+
+            const avatar = document.createElement("div");
+            avatar.className = "avatar error-avatar";
+            avatar.textContent = "!";
+
+            const bubble = document.createElement("div");
+            bubble.className = "message bot-message error-message";
+            bubble.textContent = errorText;
+
+            wrapper.appendChild(avatar);
+            wrapper.appendChild(bubble);
+
+            chatBox.appendChild(wrapper);
+
+            scrollToBottom();
+        }
+
+        function removeEmptyState() {
+            const emptyState = document.querySelector(".empty-state");
+
+            if (emptyState) {
+                emptyState.remove();
+            }
+        }
+
+        function setLoading(isLoading) {
+            sendButton.disabled = isLoading;
+            input.disabled = isLoading;
+            sendButton.textContent = isLoading ? "Thinking..." : "Send";
+        }
+
+        function scrollToBottom() {
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        function resizeTextarea() {
+            input.style.height = "auto";
+            input.style.height = Math.min(input.scrollHeight, 140) + "px";
+        }
+
+        input.addEventListener("input", resizeTextarea);
+
+        input.addEventListener("keydown", function(e) {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>
