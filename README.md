@@ -20,8 +20,6 @@ Wikipedia AI Chat is a small Flask web app that answers user questions using Wik
 - Google Gemini API through `google-genai`
 - Wikipedia MediaWiki API
 - Requests
-- HTML/CSS frontend
-- Environment variables through `dotenv`
 
 ## Project structure
 
