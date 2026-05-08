@@ -5,8 +5,9 @@ from typing import List
 from datetime import date
 from dotenv import load_dotenv
 from google import genai
-
-from wikipedia_tool import retrieve_wikipedia_context
+from wikipedia_tool import retrieve_wikipedia_sources
+from web_tool import retrieve_web_context
+from rag_utils import build_ranked_context
 
 
 load_dotenv()
@@ -18,7 +19,7 @@ if not api_key:
 
 client = genai.Client(api_key=api_key.strip())
 
-MODEL = "gemini-2.5-flash-lite"
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
 
 def extract_json_array(text: str) -> List[str]:
@@ -130,41 +131,54 @@ Output:
 def ask_gemini_with_wikipedia(user_message: str) -> str:
     """
     Main RAG function:
-    1. Generate smarter Wikipedia queries.
-    2. Retrieve multiple relevant Wikipedia pages.
-    3. Ask Gemini to answer the exact user question using the retrieved context.
+    1. Generate search queries.
+    2. Retrieve Wikipedia and web sources.
+    3. Chunk and rank evidence.
+    4. Ask Gemini to answer using only the selected evidence.
     """
-
     queries = generate_wikipedia_queries(user_message)
 
-    wiki_context, sources = retrieve_wikipedia_context(
+    wiki_sources = retrieve_wikipedia_sources(
         queries=queries,
         pages_per_query=2,
         max_pages=4,
     )
 
-    source_list = ""
+    web_sources = retrieve_web_context(
+        queries=queries,
+        results_per_query=3,
+        max_pages=4,
+    )
 
-    if sources:
-        source_list = "\n".join(
-            [
-                f"- [{index}] {source['title']}: {source['url']}"
-                for index, source in enumerate(sources, start=1)
-            ]
-        )
+    all_sources = wiki_sources + web_sources
+
+    if not all_sources:
+        return "I could not find useful sources for this question."
+
+    ranked_context, citation_sources = build_ranked_context(
+        user_message=user_message,
+        queries=queries,
+        sources=all_sources,
+        max_chunks=8,
+    )
+
+    source_list = "\n".join(
+        [
+            f"- [{index}] {source['title']}: {source['url']}"
+            for index, source in enumerate(citation_sources, start=1)
+        ]
+    )
 
     prompt = f"""
 You are a careful research assistant.
 
-Your job is to answer the user's exact question using the Wikipedia context below.
+Your job is to answer the user's exact question using only the retrieved context below.
 
 Rules:
-- Do not merely summarize the articles.
-- Answer the exact question the user asked.
-- Use the retrieved Wikipedia context as your evidence.
-- If the context contains enough information, give a direct answer.
-- If the answer requires comparison, compare the relevant facts clearly.
-- If the context is incomplete, say what is missing.
+- Do not use outside knowledge.
+- Do not merely summarize the sources.
+- Answer the exact question.
+- If the evidence is weak or incomplete, say so directly.
 - Use inline citations like [1], [2], [3].
 - Only cite source numbers that appear in the provided context.
 - Every major factual claim should have an inline citation.
@@ -175,17 +189,18 @@ Rules:
 User question:
 {user_message}
 
-Wikipedia search queries used:
+Search queries used:
 {json.dumps(queries, indent=2)}
 
-Wikipedia context:
-{wiki_context}
+Retrieved context:
+{ranked_context}
 
 Available sources:
 {source_list}
 
 Answer:
 """
+
     response = client.models.generate_content(
         model=MODEL,
         contents=prompt,
@@ -194,38 +209,43 @@ Answer:
     answer = (response.text or "").strip()
 
     if not answer:
-        return "I could not generate an answer from the retrieved Wikipedia context."
+        return "I could not generate an answer from the retrieved context."
 
-    bibliography = build_bibliography(sources)
-
+    bibliography = build_bibliography(citation_sources)
     return answer + bibliography
 
 def build_bibliography(sources) -> str:
     """
-    Build a deterministic bibliography from the actual Wikipedia sources retrieved.
+    Build a deterministic bibliography from the actual retrieved sources.
     This prevents Gemini from inventing sources.
     """
-
     if not sources:
         return ""
 
     retrieved_date = date.today().strftime("%B %d, %Y")
-
     bibliography_lines = ["\n\n## References"]
 
     for index, source in enumerate(sources, start=1):
-        title = source.get("title", "Untitled Wikipedia page")
+        title = source.get("title", "Untitled source")
         url = source.get("url", "")
+        source_type = source.get("source_type", "web")
+
+        if source_type == "wikipedia":
+            publisher = "Wikipedia"
+            author = "Wikipedia contributors"
+        else:
+            publisher = "Web source"
+            author = title
 
         if url:
             bibliography_lines.append(
-                f"{index}. Wikipedia contributors. (n.d.). "
-                f"*[{title}]({url})*. Wikipedia. Retrieved {retrieved_date}."
+                f"{index}. {author}. (n.d.). "
+                f"*[{title}]({url})*. {publisher}. Retrieved {retrieved_date}."
             )
         else:
             bibliography_lines.append(
-                f"{index}. Wikipedia contributors. (n.d.). "
-                f"*{title}*. Wikipedia. Retrieved {retrieved_date}."
+                f"{index}. {author}. (n.d.). "
+                f"*{title}*. {publisher}. Retrieved {retrieved_date}."
             )
 
     return "\n".join(bibliography_lines)

@@ -151,3 +151,48 @@ def retrieve_wikipedia_context(
     context = "\n\n---\n\n".join(context_blocks)
 
     return context, sources
+
+def retrieve_wikipedia_sources(
+    queries: List[str],
+    pages_per_query: int = 3,
+    max_pages: int = 8,
+) -> List[Dict[str, str]]:
+    """
+    Search Wikipedia using multiple queries, fetch pages, deduplicate them,
+    and return source dictionaries instead of formatted context.
+    """
+    sources = []
+    seen_titles = set()
+
+    for query in queries:
+        try:
+            titles = search_wikipedia_titles(query, limit=pages_per_query)
+        except Exception as e:
+            print(f"Wikipedia title search failed for query '{query}': {e}")
+            continue
+
+        for title in titles:
+            title_key = title.lower().strip()
+
+            if title_key in seen_titles:
+                continue
+
+            try:
+                page = fetch_wikipedia_page(title)
+            except Exception as e:
+                print(f"Wikipedia page fetch failed for title '{title}': {e}")
+                continue
+
+            if not page:
+                continue
+
+            page["matched_query"] = query
+            page["source_type"] = "wikipedia"
+
+            sources.append(page)
+            seen_titles.add(title_key)
+
+            if len(sources) >= max_pages:
+                return sources
+
+    return sources
