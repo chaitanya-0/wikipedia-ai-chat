@@ -6,3 +6,4 @@ requests
 ddgs
 trafilatura
 lxml_html_clean
+gunicorn
